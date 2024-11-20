@@ -39,8 +39,8 @@ class ShellHookListener(QAbstractNativeEventFilter):
         if event_type == "windows_generic_MSG":
             msg = ctypes.wintypes.MSG.from_address(int(message))
             if msg.message == self.main_window.WM_SHELLHOOKMESSAGE:
-                if msg.wParam in [self.main_window.HSHELL_WINDOWCREATED, self.main_window.HSHELL_WINDOWDESTROYED]:
-                    print(f"Shell message received: wParam={msg.wParam}")  # Debugging output
+                if msg.wParam in [self.main_window.HSHELL_WINDOWCREATED, self.main_window.HSHELL_WINDOWDESTROYED, self.main_window.HSHELL_WINDOWTITLECHANGE]:
+                    # print(f"Shell message received: wParam={msg.wParam}")  # Debugging output
                     self.main_window.update_taskbar_buttons()
         return False, 0
 
@@ -112,7 +112,7 @@ class FixedWindowApp(QWidget):
         button.setText(elided_text)
         button.setStyleSheet("background-color: navy; color: white; border: none; border-top: 1px solid gray; border-bottom: 1px solid gray; padding-left: 5px; text-align: left;")
         button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        button.setStyleSheet(button.styleSheet() + " text-align: left; padding-left: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;")
+        button.setStyleSheet(button.styleSheet() + " text-align: left; padding-left: 5px; white-space: nowrap; ")
         
         original_color = QColor("navy")
         hover_color = QColor("red")
@@ -122,7 +122,7 @@ class FixedWindowApp(QWidget):
             animation.setDuration(300)
             animation.setStartValue(original_color)
             animation.setEndValue(hover_color)
-            animation.valueChanged.connect(lambda color: button.setStyleSheet(f"background-color: {color.name()}; color: white; border: none; border-top: 1px solid gray; border-bottom: 1px solid gray; padding-left: 5px; qproperty-alignment: AlignLeft; text-align: left;"))
+            animation.valueChanged.connect(lambda color: button.setStyleSheet(f"background-color: {color.name()}; color: white; border: none; border-top: 1px solid gray; border-bottom: 1px solid gray; padding-left: 5px; text-align: left;"))
             animation.start()
             button.animation = animation  # Keep a reference to avoid garbage collection
 
@@ -131,7 +131,7 @@ class FixedWindowApp(QWidget):
             animation.setDuration(300)
             animation.setStartValue(hover_color)
             animation.setEndValue(original_color)
-            animation.valueChanged.connect(lambda color: button.setStyleSheet(f"background-color: {color.name()}; color: white; border: none; border-top: 1px solid gray; border-bottom: 1px solid gray; padding-left: 5px; qproperty-alignment: AlignLeft; text-align: left;"))
+            animation.valueChanged.connect(lambda color: button.setStyleSheet(f"background-color: {color.name()}; color: white; border: none; border-top: 1px solid gray; border-bottom: 1px solid gray; padding-left: 5px; text-align: left;"))
             animation.start()
             button.animation = animation  # Keep a reference to avoid garbage collection
 
@@ -140,6 +140,7 @@ class FixedWindowApp(QWidget):
 
     def set_darkened_background(self):
         # Capture the current screen
+        self.setAttribute(Qt.WA_TranslucentBackground)
         screen = QApplication.primaryScreen()
         screenshot = screen.grabWindow(0)
 
@@ -153,7 +154,6 @@ class FixedWindowApp(QWidget):
         # Create a darkened version of the image (reduce brightness by 40%)
         darkened_image = QImage(image.size(), QImage.Format_ARGB32)
         painter = QPainter(darkened_image)
-        painter.drawImage(0, 0, image)
         painter.setCompositionMode(QPainter.CompositionMode_Multiply)
         painter.fillRect(darkened_image.rect(), QColor(0, 0, 0, 196))  # transparency black fill
         painter.end()
@@ -165,63 +165,74 @@ class FixedWindowApp(QWidget):
         darkened_label.setPixmap(darkened_pixmap)
         darkened_label.lower()  # Make sure the darkened background is behind other widgets
 
-    def add_taskbar_buttons(self):
-        def get_window_icon(hwnd):
-            # Try to get the icon of the window using WM_GETICON
-            icon_handle = win32gui.SendMessage(hwnd, win32con.WM_GETICON, win32con.ICON_SMALL, 0)
-            if icon_handle == 0:
-                # If no icon found, try to get the large icon
-                icon_handle = win32gui.SendMessage(hwnd, win32con.WM_GETICON, win32con.ICON_BIG, 0)
-            if icon_handle == 0:
-                # If still no icon, get the class icon
-                icon_handle = ctypes.windll.user32.GetClassLongPtrW(hwnd, -14)
+    def get_window_icon(self, hwnd):
+        # Try to get the icon of the window using WM_GETICON
+        icon_handle = win32gui.SendMessage(hwnd, win32con.WM_GETICON, win32con.ICON_SMALL, 0)
+        if icon_handle == 0:
+            # If no icon found, try to get the large icon
+            icon_handle = win32gui.SendMessage(hwnd, win32con.WM_GETICON, win32con.ICON_BIG, 0)
+        if icon_handle == 0:
+            # If still no icon, get the class icon
+            icon_handle = ctypes.windll.user32.GetClassLongPtrW(hwnd, -14)
 
-            if icon_handle != 0:
-                # Convert the icon handle to QPixmap using QtWin
-                icon_pixmap = QtWin.fromHICON(icon_handle)
-                ctypes.windll.user32.DestroyIcon(icon_handle)
-                return icon_pixmap
-            return None
+        if icon_handle != 0:
+            # Convert the icon handle to QPixmap using QtWin
+            icon_pixmap = QtWin.fromHICON(icon_handle)
+            ctypes.windll.user32.DestroyIcon(icon_handle)
+            return icon_pixmap
+        return None
+    def add_taskbar_buttons(self):
         current_y = BUTTON_HEIGHT * 3  # Start below the existing buttons
         hwnd_list = self.get_taskbar_windows()
         for hwnd, title in hwnd_list:
-            button = QPushButton(title, self)
-            # Get the window icon and set it to the button
-            icon_pixmap = get_window_icon(hwnd)
-            if icon_pixmap:
-                button.setIcon(QIcon(icon_pixmap))
-            button.setGeometry(0, current_y, TASKBAR_SIZE, BUTTON_HEIGHT)
-            button.clicked.connect(lambda checked, hwnd=hwnd: self.toggle_window(hwnd))
-            self.add_hover_animation(button)
-            self.taskbar_buttons[hwnd] = button
-            current_y += BUTTON_HEIGHT
+            ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+            if not (ex_style & win32con.WS_EX_TOOLWINDOW) and not (ex_style & 0x00200000):
+                button = QPushButton(title, self)
+                # Get the window icon and set it to the button
+                icon_pixmap = self.get_window_icon(hwnd)
+                if icon_pixmap:
+                    button.setIcon(QIcon(icon_pixmap))
+                button.setGeometry(0, current_y, TASKBAR_SIZE, BUTTON_HEIGHT)
+                button.clicked.connect(lambda checked, hwnd=hwnd: self.toggle_window(hwnd))
+                self.add_hover_animation(button)
+                self.taskbar_buttons[hwnd] = button
+                current_y += BUTTON_HEIGHT
 
     def get_taskbar_windows(self):
         def enum_windows_callback(hwnd, hwnd_list):
             # Filter only normal, visible windows with titles
             if win32gui.IsWindowVisible(hwnd) and win32gui.GetWindowText(hwnd):
+                # print(f"Found: {win32gui.GetWindowText(hwnd)}")
                 hwnd_list.append(hwnd)
             return True
 
         hwnd_list = []
         win32gui.EnumWindows(enum_windows_callback, hwnd_list)
+        # print("-------------------------------------------------");
         return [(hwnd, win32gui.GetWindowText(hwnd)) for hwnd in hwnd_list]
 
     def update_taskbar_buttons(self):
         hwnd_list = [hwnd for hwnd, _ in self.get_taskbar_windows()]
 
-        # Remove buttons for closed windows
-        for hwnd in list(self.taskbar_buttons.keys()):
-            if hwnd not in hwnd_list:
-                button = self.taskbar_buttons.pop(hwnd)
-                button.deleteLater()
+        # Update titles for existing windows if they have changed
+        for hwnd in self.taskbar_buttons:
+            new_title = win32gui.GetWindowText(hwnd)
+            button = self.taskbar_buttons[hwnd]
+            if button.text() != new_title:
+                button.setText(new_title)
 
         # Add buttons for newly opened windows
         for hwnd, title in self.get_taskbar_windows():
-            if hwnd not in self.taskbar_buttons:
+            ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+            if hwnd not in self.taskbar_buttons and win32gui.IsWindowVisible(hwnd) and not (ex_style & win32con.WS_EX_TOOLWINDOW) and not (ex_style & 0x00200000):
                 button = QPushButton(title, self)
+                # Get the window icon and set it to the button
+                icon_pixmap = self.get_window_icon(hwnd)
+                if icon_pixmap:
+                    button.setIcon(QIcon(icon_pixmap))
                 button.setGeometry(0, 0, TASKBAR_SIZE, BUTTON_HEIGHT)  # 初始位置隨意設置，稍後重新排列
                 button.clicked.connect(lambda checked, hwnd=hwnd: self.toggle_window(hwnd))
+                button.show()
                 self.add_hover_animation(button)
                 self.taskbar_buttons[hwnd] = button
 
@@ -303,13 +314,14 @@ class FixedWindowApp(QWidget):
         self.WM_SHELLHOOKMESSAGE = user32.RegisterWindowMessageW("SHELLHOOK")
         self.HSHELL_WINDOWCREATED = 0x0001
         self.HSHELL_WINDOWDESTROYED = 0x0002
+        self.HSHELL_WINDOWTITLECHANGE = 0x000C  # Message ID for window title change
         if not user32.RegisterShellHookWindow(self.hWnd):
             print("Failed to register shell hook window.")  # Debugging output
 
         # Create a shell hook listener and install it
         self.shell_hook_listener = ShellHookListener(self)
         QApplication.instance().installNativeEventFilter(self.shell_hook_listener)
-        print(f"Shell hook registered with message ID: {self.WM_SHELLHOOKMESSAGE}")  # Debugging output
+        # print(f"Shell hook registered with message ID: {self.WM_SHELLHOOKMESSAGE}")  # Debugging output
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
