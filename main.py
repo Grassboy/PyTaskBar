@@ -1,7 +1,9 @@
+import os
 import sys
+import subprocess
 import re
 from PyQt5.QtWidgets import QApplication, QPushButton, QMessageBox, QWidget, QLabel, QSizePolicy, QToolTip
-from PyQt5.QtCore import Qt, QTimer, QAbstractNativeEventFilter, QVariantAnimation, QMimeData, QPoint
+from PyQt5.QtCore import Qt, QTimer, QAbstractNativeEventFilter, QVariantAnimation, QMimeData, QPoint, QDateTime, QSize
 from PyQt5.QtGui import QScreen, QPixmap, QPainter, QImage, QColor, QIcon, QFont, QDrag
 from PyQt5.QtWinExtras import QtWin
 import ctypes
@@ -16,6 +18,12 @@ TASKBAR_SIZE = 96
 BUTTON_HEIGHT = 32
 
 ASFW_ANY = -1
+
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
 
 class APPBARDATA(ctypes.Structure):
     _fields_ = [
@@ -103,23 +111,62 @@ class FixedWindowApp(QWidget):
         # Remove window frame, making it impossible to resize or move
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         
-        self.setFixedSize(TASKBAR_SIZE, get_primary_screen_geometry(QApplication.instance()).height())
+        self.setFixedSize(TASKBAR_SIZE, SCREEN_HEIGHT)
 
         # Set a darkened background
         self.set_darkened_background()
 
+        normal_button_style = "QPushButton { background-color: rgba(0, 0, 0, 0.4); color: white; border: none; text-align: center;} QPushButton:hover {background: rgba(128,128,128, 0.3); line-height: 150%; } QToolTip{background-color: white; color: black; border: 1px solid black;}"
+        
         # Create a button to simulate pressing the Windows key
-        self.windows_key_button = DraggableButton('Windows鍵', self)
+        self.windows_key_button = DraggableButton('', self)
+        win_icon = QIcon(resource_path("windows.svg"))  # 从主题获取图标，或使用自己的路径
+        self.windows_key_button.setIcon(win_icon)
+        self.windows_key_button.setIconSize(QSize(20, 20))  # 设置图标大小
         self.windows_key_button.setGeometry(0, 0, TASKBAR_SIZE, BUTTON_HEIGHT)
         self.windows_key_button.clicked.connect(self.press_windows_key)
-        self.add_hover_animation(self.windows_key_button)
+        self.windows_key_button.setStyleSheet(normal_button_style)
 
         # Create a button to close the application
-        self.close_button = DraggableButton('Close', self)
-        self.close_button.setToolTip("Your tooltip text")
-        self.close_button.setGeometry(0, BUTTON_HEIGHT * 1, TASKBAR_SIZE, BUTTON_HEIGHT)
+        self.close_button = QPushButton('', self)
+        # 设置一个带叉叉的图标，可以使用任意合适的图标文件路径
+        close_icon = QIcon(resource_path("close.svg"))  # 从主题获取图标，或使用自己的路径
+        self.close_button.setIcon(close_icon)
+        self.close_button.setIconSize(QSize(24, 24))  # 设置图标大小
+        self.close_button.setGeometry(0, SCREEN_HEIGHT - BUTTON_HEIGHT * 1 - 1, TASKBAR_SIZE, BUTTON_HEIGHT)
         self.close_button.clicked.connect(self.close_app)
-        self.add_hover_animation(self.close_button)
+        self.close_button.setStyleSheet(normal_button_style)
+
+        # Create a button to open volume setting
+        self.close_button = QPushButton('', self)
+        close_icon = QIcon(resource_path("volume.svg"))  # 从主题获取图标，或使用自己的路径
+        self.close_button.setIcon(close_icon)
+        self.close_button.setIconSize(QSize(16, 16))  # 设置图标大小
+        self.close_button.setGeometry(0, SCREEN_HEIGHT - BUTTON_HEIGHT * 4 - 1, 24, 24)
+        self.close_button.clicked.connect(self.open_volume_setting)
+        self.close_button.setStyleSheet(normal_button_style)
+
+        # Create a button to open wifi setting
+        self.close_button = QPushButton('', self)
+        close_icon = QIcon(resource_path("wifi.svg"))  # 从主题获取图标，或使用自己的路径
+        self.close_button.setIcon(close_icon)
+        self.close_button.setIconSize(QSize(16, 16))  # 设置图标大小
+        self.close_button.setGeometry(24, SCREEN_HEIGHT - BUTTON_HEIGHT * 4 - 1, 24, 24)
+        self.close_button.clicked.connect(self.open_wifi_setting)
+        self.close_button.setStyleSheet(normal_button_style)
+
+        # Create a button to display the current date and time
+        current_time = QDateTime.currentDateTime()
+        formatted_time = current_time.toString("AP hh:mm\ndddd\nyyyy/MM/dd")
+        self.date_key_button = QPushButton(formatted_time, self)
+        self.date_key_button.setGeometry(0, SCREEN_HEIGHT - BUTTON_HEIGHT * 3 - 1, TASKBAR_SIZE, BUTTON_HEIGHT*2)
+        self.date_key_button.clicked.connect(self.press_windows_alt_d)
+        self.date_key_button.setStyleSheet(normal_button_style)
+
+        self.show_desktop_button = QPushButton("", self)
+        self.show_desktop_button.setGeometry(0, SCREEN_HEIGHT - 1, TASKBAR_SIZE, 1)
+        self.show_desktop_button.clicked.connect(self.press_windows_d)
+        self.show_desktop_button.setStyleSheet("background-color: rgba(255,255,255,0.6); border: none; ")
 
         # Dictionary to keep track of dynamically created buttons
         self.taskbar_buttons = {}
@@ -161,19 +208,23 @@ class FixedWindowApp(QWidget):
         font_metrics = button.fontMetrics()
         elided_text = font_metrics.elidedText(button.text(), Qt.ElideRight, button.width() - 10)  # 10 for padding
         button.setText(elided_text)
-        button.setStyleSheet("QPushButton{ background-color: navy; color: white; border: none; border-top: 1px solid gray; border-bottom: 1px solid gray; padding-left: 5px; text-align: left;} QToolTip{background-color: white; color: black; border: 1px solid black;}")
+        button.setStyleSheet("QPushButton{ background-color: rgba(0, 0, 128, 0.5); color: white; padding-left: 5px; text-align: left;} QToolTip{background-color: white; color: black; border: 1px solid black;}")
         button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         button.setStyleSheet(button.styleSheet() + " text-align: left; padding-left: 5px; white-space: nowrap; ")
         
-        original_color = QColor("navy")
+        original_color = QColor(0, 0, 128, 128)
         hover_color = QColor("red")
+
+        def color_to_rgba_string(color):
+            """Helper function to convert QColor to rgba CSS string"""
+            return f"rgba({color.red()}, {color.green()}, {color.blue()}, {color.alphaF()})"
 
         def enter_event(event):
             animation = QVariantAnimation()
             animation.setDuration(300)
             animation.setStartValue(original_color)
             animation.setEndValue(hover_color)
-            animation.valueChanged.connect(lambda color: button.setStyleSheet("QPushButton { background-color: "+color.name()+"; color: white; border: none; border-top: 1px solid gray; border-bottom: 1px solid gray; padding-left: 5px; text-align: left;} QToolTip {background-color: white; color: black; border: 1px solid black; }"))
+            animation.valueChanged.connect(lambda color: button.setStyleSheet("QPushButton { background-color: "+color_to_rgba_string(color)+"; color: white; padding-left: 5px; text-align: left;} QToolTip {background-color: white; color: black; border: 1px solid black; }"))
             animation.start()
             QToolTip.showText(button.mapToGlobal(button.rect().center()), button.toolTip(), button)
             button.animation = animation  # Keep a reference to avoid garbage collection
@@ -183,7 +234,7 @@ class FixedWindowApp(QWidget):
             animation.setDuration(300)
             animation.setStartValue(hover_color)
             animation.setEndValue(original_color)
-            animation.valueChanged.connect(lambda color: button.setStyleSheet("QPushButton { background-color: "+color.name()+"; color: white; border: none; border-top: 1px solid gray; border-bottom: 1px solid gray; padding-left: 5px; text-align: left;} QToolTip {background-color: white; color: black; border: 1px solid black;}"))
+            animation.valueChanged.connect(lambda color: button.setStyleSheet("QPushButton { background-color: "+color_to_rgba_string(color)+"; color: white; padding-left: 5px; text-align: left;} QToolTip {background-color: white; color: black; border: 1px solid black;}"))
             animation.start()
             button.animation = animation  # Keep a reference to avoid garbage collection
 
@@ -234,33 +285,34 @@ class FixedWindowApp(QWidget):
             return icon_pixmap
         return None
     def add_taskbar_buttons(self):
-        current_y = BUTTON_HEIGHT * 3  # Start below the existing buttons
+        current_y = BUTTON_HEIGHT * 1 + 5   # Start below the existing buttons
         hwnd_list = self.get_taskbar_windows()
         for hwnd, title in hwnd_list:
-            ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
-            if not (ex_style & win32con.WS_EX_TOOLWINDOW):
-                button = QPushButton(title, self)
-                # Get the window icon and set it to the button
-                icon_pixmap = self.get_window_icon(hwnd)
-                if icon_pixmap:
-                    button.setIcon(QIcon(icon_pixmap))
-                button.setGeometry(0, current_y, TASKBAR_SIZE, BUTTON_HEIGHT)
-                button.clicked.connect(lambda checked, hwnd=hwnd: self.toggle_window(hwnd))
-                self.add_hover_animation(button)
-                self.taskbar_buttons[hwnd] = button
-                current_y += BUTTON_HEIGHT
+            button = QPushButton(title, self)
+            # Get the window icon and set it to the button
+            icon_pixmap = self.get_window_icon(hwnd)
+            if icon_pixmap:
+                button.setIcon(QIcon(icon_pixmap))
+            button.setGeometry(0, current_y, TASKBAR_SIZE, BUTTON_HEIGHT)
+            button.clicked.connect(lambda checked, hwnd=hwnd: self.toggle_window(hwnd))
+            self.add_hover_animation(button)
+            self.taskbar_buttons[hwnd] = button
+            current_y += BUTTON_HEIGHT
 
     def get_taskbar_windows(self):
         def enum_windows_callback(hwnd, hwnd_list):
             # Filter only normal, visible windows with titles
-            if win32gui.IsWindowVisible(hwnd) and win32gui.GetWindowText(hwnd):
-                # print(f"Found: {win32gui.GetWindowText(hwnd)}")
+            ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+            if not (ex_style & win32con.WS_EX_TOOLWINDOW) and win32gui.IsWindowVisible(hwnd) and win32gui.GetWindowText(hwnd) and (ex_style != 0x00200000):
+                print(f"Found:{ex_style} \t\t\t {win32gui.GetWindowText(hwnd)}")
                 hwnd_list.append(hwnd)
+            elif win32gui.IsWindowVisible(hwnd):
+                print(f"Skip:{ex_style} \t\t\t {win32gui.GetWindowText(hwnd)}")
             return True
 
         hwnd_list = []
         win32gui.EnumWindows(enum_windows_callback, hwnd_list)
-        # print("-------------------------------------------------");
+        print("-------------------------------------------------");
         return [(hwnd, win32gui.GetWindowText(hwnd)) for hwnd in hwnd_list]
 
     def update_taskbar_buttons(self):
@@ -288,8 +340,7 @@ class FixedWindowApp(QWidget):
 
         # Add buttons for newly opened windows
         for hwnd, title in self.get_taskbar_windows():
-            ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
-            if hwnd not in self.taskbar_buttons and win32gui.IsWindowVisible(hwnd) and not (ex_style & win32con.WS_EX_TOOLWINDOW):
+            if hwnd not in self.taskbar_buttons:
                 button = QPushButton(title, self)
                 # Get the window icon and set it to the button
                 icon_pixmap = self.get_window_icon(hwnd)
@@ -302,11 +353,21 @@ class FixedWindowApp(QWidget):
                 self.taskbar_buttons[hwnd] = button
 
         # Rearrange all taskbar buttons to ensure they are in the correct order
-        current_y = BUTTON_HEIGHT * 3  # Start below the existing static buttons
-        for hwnd in self.taskbar_buttons:
-            button = self.taskbar_buttons[hwnd]
-            button.setGeometry(0, current_y, TASKBAR_SIZE, BUTTON_HEIGHT)
-            current_y += BUTTON_HEIGHT
+        current_y = BUTTON_HEIGHT * 1 + 5  # Start below the existing static buttons
+        for hwnd in list(self.taskbar_buttons.keys()):
+            if not win32gui.IsWindow(hwnd):
+                # If the window handle is no longer valid, remove the button
+                button = self.taskbar_buttons.pop(hwnd)
+                button.deleteLater()
+            else:
+                button = self.taskbar_buttons[hwnd]
+                button.setGeometry(0, current_y, TASKBAR_SIZE, BUTTON_HEIGHT)
+                current_y += BUTTON_HEIGHT
+
+        # Create a button to display the current date and time
+        current_time = QDateTime.currentDateTime()
+        formatted_time = current_time.toString("AP hh:mm\ndddd\nyyyy/MM/dd")
+        self.date_key_button.setText(formatted_time)
 
     def toggle_window(self, hwnd):
         # Toggle the specified window between minimized and foreground
@@ -329,6 +390,20 @@ class FixedWindowApp(QWidget):
     def close_app(self):
         self.unregister_app_bar()
         QApplication.instance().quit()
+        
+    def open_wifi_setting(self):
+        try:
+            # 使用 subprocess 執行命令
+            subprocess.run(['start', 'explorer.exe', 'ms-availablenetworks:'], shell=True, check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"Error occurred: {e}")
+
+    def open_volume_setting(self):
+        try:
+            # 使用 subprocess 執行命令
+            subprocess.run(['start', 'sndvol'], shell=True, check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"Error occurred: {e}")
 
     def move_to_left(self):
         # Move the window to the left edge of the screen
@@ -339,6 +414,27 @@ class FixedWindowApp(QWidget):
         # Simulate pressing the Windows key
         ctypes.windll.user32.keybd_event(0x5B, 0, 0, 0)  # Press the Windows key (0x5B)
         ctypes.windll.user32.keybd_event(0x5B, 0, 2, 0)  # Release the Windows key (0x5B)
+
+    def press_windows_alt_d(self):
+        # 模拟按下 Windows + Alt + D
+        ctypes.windll.user32.keybd_event(0x5B, 0, 0, 0)  # Press the Windows key (0x5B)
+        ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)  # Press the Alt key (0x12)
+        ctypes.windll.user32.keybd_event(0x44, 0, 0, 0)  # Press the D key (0x44)
+
+        # 释放按键，顺序要与按下的顺序相反
+        ctypes.windll.user32.keybd_event(0x44, 0, 2, 0)  # Release the D key (0x44)
+        ctypes.windll.user32.keybd_event(0x12, 0, 2, 0)  # Release the Alt key (0x12)
+        ctypes.windll.user32.keybd_event(0x5B, 0, 2, 0)  # Release the Windows key (0x5B)
+
+    def press_windows_d(self):
+        # 模拟按下 Windows + D
+        ctypes.windll.user32.keybd_event(0x5B, 0, 0, 0)  # Press the Windows key (0x5B)
+        ctypes.windll.user32.keybd_event(0x44, 0, 0, 0)  # Press the D key (0x44)
+
+        # 释放按键，顺序要与按下的顺序相反
+        ctypes.windll.user32.keybd_event(0x44, 0, 2, 0)  # Release the D key (0x44)
+        ctypes.windll.user32.keybd_event(0x5B, 0, 2, 0)  # Release the Windows key (0x5B)
+
 
     def register_app_bar(self):
         # Register the app as an AppBar to reserve screen space
@@ -390,6 +486,7 @@ class FixedWindowApp(QWidget):
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+    SCREEN_HEIGHT = get_primary_screen_geometry(QApplication.instance()).height()
     app.setStyleSheet("""
         QToolTip { 
             background-color: white; 

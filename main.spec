@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('windows.svg', '.'), ('close.svg', '.'), ('wifi.svg', '.'), ('volume.svg', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
