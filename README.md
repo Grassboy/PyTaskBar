@@ -10,7 +10,8 @@
 工具列上的項目要可供拖曳
 要支援 Win+[0-9] 去切換第 0-9 個視窗
 
-(Translated by ChatGPT)
+    
+#### ```(Translated by ChatGPT)```
 
 # PyTaskBar
 
