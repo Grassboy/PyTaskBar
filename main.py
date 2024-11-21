@@ -1,7 +1,8 @@
 import sys
-from PyQt5.QtWidgets import QApplication, QPushButton, QMessageBox, QWidget, QLabel, QSizePolicy
-from PyQt5.QtCore import Qt, QTimer, QAbstractNativeEventFilter, QVariantAnimation
-from PyQt5.QtGui import QScreen, QPixmap, QPainter, QImage, QColor, QIcon
+import re
+from PyQt5.QtWidgets import QApplication, QPushButton, QMessageBox, QWidget, QLabel, QSizePolicy, QToolTip
+from PyQt5.QtCore import Qt, QTimer, QAbstractNativeEventFilter, QVariantAnimation, QMimeData, QPoint
+from PyQt5.QtGui import QScreen, QPixmap, QPainter, QImage, QColor, QIcon, QFont, QDrag
 from PyQt5.QtWinExtras import QtWin
 import ctypes
 from ctypes import wintypes, windll, byref
@@ -29,6 +30,38 @@ class APPBARDATA(ctypes.Structure):
 def get_primary_screen_geometry(app):
     primary_screen = app.primaryScreen()
     return primary_screen.availableGeometry()
+
+class DraggableButton(QPushButton):
+    def __init__(self, title, parent):
+        super().__init__(title, parent)
+        self.setAcceptDrops(True)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.drag_start_position = event.pos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if not (event.buttons() & Qt.LeftButton):
+            return
+        if (event.pos() - self.drag_start_position).manhattanLength() < QApplication.startDragDistance():
+            return
+
+        drag = QDrag(self)
+        mime_data = QMimeData()
+        mime_data.setText(self.text())  # Store button text to help identify during drop
+        drag.setMimeData(mime_data)
+        drag.setHotSpot(event.pos() - self.rect().topLeft())
+
+        drop_action = drag.exec_(Qt.MoveAction)
+
+    def dragEnterEvent(self, event):
+        event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        # Notify the main application to handle the button swap
+        self.parent().swap_buttons(self, event.source())
+        event.acceptProposedAction()
 
 class ShellHookListener(QAbstractNativeEventFilter):
     def __init__(self, main_window):
@@ -76,13 +109,14 @@ class FixedWindowApp(QWidget):
         self.set_darkened_background()
 
         # Create a button to simulate pressing the Windows key
-        self.windows_key_button = QPushButton('Windows鍵', self)
+        self.windows_key_button = DraggableButton('Windows鍵', self)
         self.windows_key_button.setGeometry(0, 0, TASKBAR_SIZE, BUTTON_HEIGHT)
         self.windows_key_button.clicked.connect(self.press_windows_key)
         self.add_hover_animation(self.windows_key_button)
 
         # Create a button to close the application
-        self.close_button = QPushButton('Close', self)
+        self.close_button = DraggableButton('Close', self)
+        self.close_button.setToolTip("Your tooltip text")
         self.close_button.setGeometry(0, BUTTON_HEIGHT * 1, TASKBAR_SIZE, BUTTON_HEIGHT)
         self.close_button.clicked.connect(self.close_app)
         self.add_hover_animation(self.close_button)
@@ -93,13 +127,30 @@ class FixedWindowApp(QWidget):
         # Add buttons for each window in the taskbar
         self.add_taskbar_buttons()
 
+    def swap_buttons(self, target_button, source_button):
+        # Get the geometry of both buttons
+        target_geometry = target_button.geometry()
+        source_geometry = source_button.geometry()
+
+        # Swap the positions of the target and source buttons
+        target_button.setGeometry(source_geometry)
+        source_button.setGeometry(target_geometry)
+
+        # Update button order in the taskbar_buttons dictionary
+        hwnd_source = next((hwnd for hwnd, button in self.taskbar_buttons.items() if button == source_button), None)
+        hwnd_target = next((hwnd for hwnd, button in self.taskbar_buttons.items() if button == target_button), None)
+
+        if hwnd_source and hwnd_target:
+            # Swap the dictionary values
+            self.taskbar_buttons[hwnd_source], self.taskbar_buttons[hwnd_target] = self.taskbar_buttons[hwnd_target], self.taskbar_buttons[hwnd_source]
+
     def add_hover_animation(self, button):
         # Adjust text to show custom ellipsis (~) if too long, considering icon size
         font_metrics = button.fontMetrics()
         icon_width = button.iconSize().width() if not button.icon().isNull() else 0
         padding = 15  # Include some padding for better visual spacing
         available_width = button.width() - icon_width - padding
-
+        button.setToolTip(button.text())
         if font_metrics.width(button.text()) > available_width:
             elided_text = button.text()
             while font_metrics.width(elided_text + "...") > available_width and len(elided_text) > 0:
@@ -110,7 +161,7 @@ class FixedWindowApp(QWidget):
         font_metrics = button.fontMetrics()
         elided_text = font_metrics.elidedText(button.text(), Qt.ElideRight, button.width() - 10)  # 10 for padding
         button.setText(elided_text)
-        button.setStyleSheet("background-color: navy; color: white; border: none; border-top: 1px solid gray; border-bottom: 1px solid gray; padding-left: 5px; text-align: left;")
+        button.setStyleSheet("QPushButton{ background-color: navy; color: white; border: none; border-top: 1px solid gray; border-bottom: 1px solid gray; padding-left: 5px; text-align: left;} QToolTip{background-color: white; color: black; border: 1px solid black;}")
         button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         button.setStyleSheet(button.styleSheet() + " text-align: left; padding-left: 5px; white-space: nowrap; ")
         
@@ -122,8 +173,9 @@ class FixedWindowApp(QWidget):
             animation.setDuration(300)
             animation.setStartValue(original_color)
             animation.setEndValue(hover_color)
-            animation.valueChanged.connect(lambda color: button.setStyleSheet(f"background-color: {color.name()}; color: white; border: none; border-top: 1px solid gray; border-bottom: 1px solid gray; padding-left: 5px; text-align: left;"))
+            animation.valueChanged.connect(lambda color: button.setStyleSheet("QPushButton { background-color: "+color.name()+"; color: white; border: none; border-top: 1px solid gray; border-bottom: 1px solid gray; padding-left: 5px; text-align: left;} QToolTip {background-color: white; color: black; border: 1px solid black; }"))
             animation.start()
+            QToolTip.showText(button.mapToGlobal(button.rect().center()), button.toolTip(), button)
             button.animation = animation  # Keep a reference to avoid garbage collection
 
         def leave_event(event):
@@ -131,7 +183,7 @@ class FixedWindowApp(QWidget):
             animation.setDuration(300)
             animation.setStartValue(hover_color)
             animation.setEndValue(original_color)
-            animation.valueChanged.connect(lambda color: button.setStyleSheet(f"background-color: {color.name()}; color: white; border: none; border-top: 1px solid gray; border-bottom: 1px solid gray; padding-left: 5px; text-align: left;"))
+            animation.valueChanged.connect(lambda color: button.setStyleSheet("QPushButton { background-color: "+color.name()+"; color: white; border: none; border-top: 1px solid gray; border-bottom: 1px solid gray; padding-left: 5px; text-align: left;} QToolTip {background-color: white; color: black; border: 1px solid black;}"))
             animation.start()
             button.animation = animation  # Keep a reference to avoid garbage collection
 
@@ -186,7 +238,7 @@ class FixedWindowApp(QWidget):
         hwnd_list = self.get_taskbar_windows()
         for hwnd, title in hwnd_list:
             ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
-            if not (ex_style & win32con.WS_EX_TOOLWINDOW) and not (ex_style & 0x00200000):
+            if not (ex_style & win32con.WS_EX_TOOLWINDOW):
                 button = QPushButton(title, self)
                 # Get the window icon and set it to the button
                 icon_pixmap = self.get_window_icon(hwnd)
@@ -218,13 +270,26 @@ class FixedWindowApp(QWidget):
         for hwnd in self.taskbar_buttons:
             new_title = win32gui.GetWindowText(hwnd)
             button = self.taskbar_buttons[hwnd]
-            if button.text() != new_title:
-                button.setText(new_title)
+            old_title = button.text()
+            old_title = re.sub(r"\.\.\.$", "", old_title)
+            if not new_title.startswith(old_title):
+                button.setToolTip(new_title)
+                font_metrics = button.fontMetrics()
+                icon_width = button.iconSize().width() if not button.icon().isNull() else 0
+                padding = 15  # Include some padding for better visual spacing
+                available_width = button.width() - icon_width - padding
+
+                if font_metrics.width(new_title) > available_width:
+                    elided_text = new_title
+                    while font_metrics.width(elided_text + "...") > available_width and len(elided_text) > 0:
+                        elided_text = elided_text[:-1]
+                    elided_text += "..."
+                    button.setText(elided_text)
 
         # Add buttons for newly opened windows
         for hwnd, title in self.get_taskbar_windows():
             ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
-            if hwnd not in self.taskbar_buttons and win32gui.IsWindowVisible(hwnd) and not (ex_style & win32con.WS_EX_TOOLWINDOW) and not (ex_style & 0x00200000):
+            if hwnd not in self.taskbar_buttons and win32gui.IsWindowVisible(hwnd) and not (ex_style & win32con.WS_EX_TOOLWINDOW):
                 button = QPushButton(title, self)
                 # Get the window icon and set it to the button
                 icon_pixmap = self.get_window_icon(hwnd)
@@ -325,6 +390,14 @@ class FixedWindowApp(QWidget):
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+    app.setStyleSheet("""
+        QToolTip { 
+            background-color: white; 
+            color: black; 
+            border: 1px solid black; 
+        }
+    """)
+    
     mainWin = FixedWindowApp()
     mainWin.show()
     sys.exit(app.exec_())
